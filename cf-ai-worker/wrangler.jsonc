@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cf-ai-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-11-18",
+  "observability": {
+    "enabled": true
+  },
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CHAT_MEMORY",
+        "class_name": "ChatMemory"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ChatMemory"]
+    }
+  ],
+
+  "ai": {
+    "binding": "AI"
+  }
+}
