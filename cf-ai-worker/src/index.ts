@@ -9,7 +9,7 @@ import { ChatMemory } from "./ChatMemory";
 
 export interface Env {
   CHAT_MEMORY: DurableObjectNamespace;
-  AI: Ai;  // <-- AI binding included here
+  AI: Ai;
 }
 
 const CORS_HEADERS = {
@@ -44,19 +44,14 @@ export default {
       const url = new URL(request.url);
       const path = url.pathname;
 
-      // Handle CORS preflight
       if (request.method === "OPTIONS") {
         return new Response(null, { headers: CORS_HEADERS });
       }
 
-      // Basic health check
       if (path === "/" && request.method === "GET") {
         return jsonResponse({ ok: true, message: "Worker is running" });
       }
 
-      // ------------------------------------------------------------------
-      //  POST /chat   (DO memory + Workers AI + typed history)
-      // ------------------------------------------------------------------
       if (path === "/chat" && request.method === "POST") {
         const contentType = request.headers.get("content-type") || "";
         if (!contentType.includes("application/json")) {
@@ -75,14 +70,19 @@ export default {
           );
         }
 
-        // 1. Identify session (later: generate unique IDs client-side)
-        const sessionId = body.sessionId ?? "default-session";
+        // --------------------------------------------------
+        // (FIXED) Get sessionId from URL, not from body
+        // --------------------------------------------------
+        let sessionId = url.searchParams.get("sessionId");
+        if (!sessionId) {
+          sessionId = crypto.randomUUID();
+        }
 
-        // 2. Get DO instance
+        // 2. Get DO instance unique to this session
         const id = env.CHAT_MEMORY.idFromName(sessionId);
         const stub = env.CHAT_MEMORY.get(id);
 
-        // 3. Append user's message
+        // 3. Append user message
         await stub.fetch("https://do/append", {
           method: "POST",
           body: JSON.stringify({
@@ -90,7 +90,7 @@ export default {
           }),
         });
 
-        // 4. Read history
+        // 4. Load history
         const historyRes = await stub.fetch("https://do/list");
         const raw = await historyRes.json();
 
@@ -98,9 +98,7 @@ export default {
           ? (raw as ChatMessage[])
           : [];
 
-        // ---------------------------------------------------------
-        // 5. Generate AI reply using Workers AI (Llama 3.3)
-        // ---------------------------------------------------------
+        // 5. AI Call
         const aiResponse = await env.AI.run(
           "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
           {
@@ -112,17 +110,12 @@ export default {
               {
                 role: "user",
                 content: body.text,
-              }
+              },
             ],
             max_tokens: 256,
           }
         );
 
-        // Workers AI text models return one of these fields:
-        // { response: string }
-        // { result: string }
-        // { output_text: string }
-       // Cast the AI response to "any" because Workers AI schemas vary by model
         const out: any = aiResponse;
 
         const reply =
@@ -134,8 +127,7 @@ export default {
           JSON.stringify(out) ??
           "I'm sorry, I couldn't generate a response.";
 
-
-        // 6. Store assistant reply in DO
+        // 6. Store AI message
         await stub.fetch("https://do/append", {
           method: "POST",
           body: JSON.stringify({
@@ -151,7 +143,6 @@ export default {
         });
       }
 
-      // Fallback route
       return jsonResponse({ ok: false, error: "Not found" }, 404);
     } catch (err) {
       console.error("Worker error:", err);
@@ -160,5 +151,4 @@ export default {
   },
 };
 
-// Required so Wrangler registers the DO
 export { ChatMemory };
